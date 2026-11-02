@@ -81,12 +81,12 @@ void loop() {
     // --- Recommended real-time visualization ---
     ld06.printScanTeleplot(Serial);  // Format compatible with https://teleplot.fr/
 
-    /*
+
     // --- Alternative display and data access examples ---
 
     // Print scan as CSV for offline logging
     ld06.printScanCSV(Serial);
-
+  /*
     // Check if a new 360° loop has been completed
     if (ld06.isNewScan()) {
       Serial.println(F("New scan completed."));
