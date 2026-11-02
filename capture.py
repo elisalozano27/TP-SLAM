@@ -4,7 +4,7 @@
 import serial  # pour lire le port série (USB)
 
 PORT = "COM3"           # port de l'ESP32 (voir Outils > Port dans l'IDE Arduino)
-FICHIER = "scan_01.csv" # à changer pour chaque nouveau scan
+FICHIER = "scan_02.csv" # à changer pour chaque nouveau scan
 NB_TOURS = 5            # nombre de tours de lidar à enregistrer
 
 # Ouverture du port à la même vitesse que le code Arduino (115200)
