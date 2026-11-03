@@ -1,4 +1,4 @@
-# localisation.py - Localisation d'un scan sur une grid map par scan matching
+# localisation_grid.py - Localisation d'un scan sur une grid map par scan matching
 # Suit le document « Scan matching : méthode de localisation en 2D avec Lidar »
 #
 # Programme principal : localise le robot sur TA grid map avec les 2 meilleures méthodes
@@ -80,8 +80,16 @@ def reference_grille(carte, facteur=1, d_max=D_MAX):
     return reference(carte / 255.0, RESOLUTION, (-N / 2 * RESOLUTION, -N / 2 * RESOLUTION), facteur, d_max)
 
 
+def reference_vectorielle(segments, d_max=D_MAX):
+    """Référence à partir d'une carte vectorielle : liste de segments ((x1, y1), (x2, y2))."""
+    return {"segments": np.array([[a[0], a[1], b[0], b[1]] for a, b in segments], dtype=float), "d_max": d_max}
+
+
 def zone_occupee(ref):
-    """Rectangle ((xmin, xmax), (ymin, ymax)) qui contient toutes les cellules occupées."""
+    """Rectangle ((xmin, xmax), (ymin, ymax)) qui contient tous les murs de la carte."""
+    if "segments" in ref:
+        s = ref["segments"]
+        return (s[:, [0, 2]].min(), s[:, [0, 2]].max()), (s[:, [1, 3]].min(), s[:, [1, 3]].max())
     lignes, colonnes = np.nonzero(ref["tab"] >= 1)
     (ox, oy), r = ref["origine"], ref["res"]
     return (ox + colonnes.min() * r, ox + (colonnes.max() + 1) * r), (oy + lignes.min() * r, oy + (lignes.max() + 1) * r)
@@ -112,9 +120,32 @@ def correler(ref, X, Y):
     return v * dedans
 
 
+def segment_le_plus_proche(segments, X, Y):
+    """Étape 2 pour une carte vectorielle (§5) : pour chaque point, distance au segment le plus proche
+    et point le plus proche sur ce segment (projection du point sur le segment)."""
+    d2_min = np.full(np.shape(X), np.inf)
+    QX, QY = np.zeros(np.shape(X)), np.zeros(np.shape(X))
+    for ax, ay, bx, by in segments:
+        ux, uy = bx - ax, by - ay
+        t = np.clip(((X - ax) * ux + (Y - ay) * uy) / max(ux * ux + uy * uy, 1e-12), 0, 1)
+        qx, qy = ax + t * ux, ay + t * uy                  # point le plus proche sur ce segment
+        d2 = (X - qx) ** 2 + (Y - qy) ** 2
+        mieux = d2 < d2_min
+        d2_min, QX, QY = np.where(mieux, d2, d2_min), np.where(mieux, qx, QX), np.where(mieux, qy, QY)
+    return np.sqrt(d2_min), QX, QY
+
+
 def score(ref, pts, x, y, theta):
-    """Étape 3 : score = moyenne des valeurs sous les points (entre 0 et 1, plus haut = mieux aligné)."""
-    return correler(ref, *transformer(pts, x, y, theta)).mean(axis=-1)
+    """Étape 3 : score entre 0 et 1, plus haut = mieux aligné.
+    Grid map (§4)         : moyenne des valeurs de la carte sous les points.
+    Carte vectorielle (§5) : 1 - moyenne des d²/d_max², d = distance au segment le plus proche.
+    Maximiser ce score = minimiser E = Σ wᵢ dᵢ² du document, avec wᵢ = 0 pour les points à plus
+    de d_max de tout segment (points aberrants ou objets absents de la carte)."""
+    X, Y = transformer(pts, x, y, theta)
+    if "segments" in ref:
+        d = np.minimum(segment_le_plus_proche(ref["segments"], X, Y)[0], ref["d_max"])
+        return 1 - (d ** 2).mean(axis=-1) / ref["d_max"] ** 2
+    return correler(ref, X, Y).mean(axis=-1)
 
 
 # ---------- Étape 4 : optimisation (§8) ----------
@@ -223,19 +254,24 @@ REJET = 0.30          # correspondance ignorée si le point est à plus de REJET
 
 def un_calcul_direct(ref, pts, pose):
     """Une étape de calcul direct, sans recherche :
-    1. correspondances : chaque point du scan est associé à la cellule occupée la plus proche ;
+    1. correspondances : chaque point du scan est associé à la cellule occupée la plus proche
+       (grid map) ou au point le plus proche du segment le plus proche (carte vectorielle) ;
     2. moments : barycentres des deux nuages et covariance entre eux ;
     3. transformation : la rotation et la translation qui superposent au mieux les deux nuages
        s'obtiennent directement par une formule (moindres carrés)."""
     X, Y = transformer(pts, *pose)
     P = np.column_stack([X, Y])                                    # points du scan dans le monde
-    proche, dist = [], []
-    for k in range(0, len(P), 50):                                 # par paquets de 50 points (mémoire)
-        d2 = ((P[k:k + 50, None, :] - ref["cellules"][None, :, :]) ** 2).sum(axis=2)
-        proche.append(d2.argmin(axis=1))
-        dist.append(np.sqrt(d2.min(axis=1)))
-    Q = ref["cellules"][np.concatenate(proche)]                    # plus proche voisin de chaque point
-    bons = np.concatenate(dist) < REJET                            # on écarte les correspondances aberrantes
+    if "segments" in ref:                                          # carte vectorielle : point le plus
+        dist, qx, qy = segment_le_plus_proche(ref["segments"], X, Y)   # proche sur le segment le plus proche
+        Q = np.column_stack([qx, qy])
+    else:                                                          # grid map : cellule occupée la plus proche
+        proche, dist = [], []
+        for k in range(0, len(P), 50):                             # par paquets de 50 points (mémoire)
+            d2 = ((P[k:k + 50, None, :] - ref["cellules"][None, :, :]) ** 2).sum(axis=2)
+            proche.append(d2.argmin(axis=1))
+            dist.append(np.sqrt(d2.min(axis=1)))
+        Q, dist = ref["cellules"][np.concatenate(proche)], np.concatenate(dist)
+    bons = dist < REJET                                            # on écarte les correspondances aberrantes
     if bons.sum() < 3:
         return pose
     P, Q = P[bons], Q[bons]
@@ -329,7 +365,7 @@ if __name__ == "__main__":
         if "Gradient" in nom:
             ax.plot(*depart[:2], "bx", label="estimation initiale")
         if vraie is not None:
-            ax.plot(*vraie[:2], "g+", markersize=12, label="pose estimee a la main (pose.csv)")
+            ax.plot(*vraie[:2], "g+", markersize=12, label="pose de poses.csv")
         ax.plot(*pose[:2], "r^", label="pose trouvée")
         ax.set_xlim(zone[0][0] - 1, zone[0][1] + 1)
         ax.set_ylim(zone[1][0] - 1, zone[1][1] + 1)

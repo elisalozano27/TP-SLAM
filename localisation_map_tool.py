@@ -13,7 +13,7 @@ import re
 import time
 import numpy as np
 import matplotlib.pyplot as plt
-import localisation as L
+import localisation_grid as L
 
 CARTE = "Map_Tool_grid_map_2.csv"
 SCAN = "Map_Tool_scan_lidar_2.csv"
