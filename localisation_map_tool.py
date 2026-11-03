@@ -15,8 +15,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import localisation as L
 
-CARTE = "Map_Tool_grid_map.csv"
-SCAN = "Map_Tool_scan_lidar.csv"
+CARTE = "Map_Tool_grid_map_2.csv"
+SCAN = "Map_Tool_scan_lidar_2.csv"
 RES = 0.1                    # taille d'une cellule de la carte du site (m), écrite dans son en-tête
 
 NB_ESSAIS = 20               # test 2 : nb d'estimations initiales tirées au hasard
