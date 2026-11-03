@@ -4,8 +4,8 @@
 import serial  # pour lire le port série (USB)
 
 PORT = "COM3"           # port de l'ESP32 (voir Outils > Port dans l'IDE Arduino)
-FICHIER = "scan_01.csv" # à changer pour chaque nouveau scan
-NB_TOURS = 20            # nombre de tours de lidar à enregistrer
+FICHIER = "scan_09.csv" # à changer pour chaque nouveau scan
+NB_TOURS = 5            # nombre de tours de lidar à enregistrer
 
 # Ouverture du port à la même vitesse que le code Arduino (115200)
 ser = serial.Serial(PORT, 115200, timeout=2)
@@ -31,4 +31,5 @@ with open(FICHIER, "w") as f:
         print("Tour", tour, "/", NB_TOURS, "enregistré")
 
 ser.close()  # on libère le port
+
 print("Scan enregistré dans", FICHIER)

@@ -14,17 +14,17 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # ---------- Étape 1 : définir la grille ----------
-TAILLE = 12.0                    # côté de la carte (m), robot au centre
+TAILLE = 28.0                    # côté de la carte (m), centrée sur la position du premier scan
 RESOLUTION = 0.05                # côté d'une cellule (m)
-N = int(TAILLE / RESOLUTION)     # nombre de cellules par côté (200)
+N = int(TAILLE / RESOLUTION)     # nombre de cellules par côté (560)
 INCONNU = 127                    # état initial de chaque cellule
 
 PLUS_OCC = 50     # ajouté à une cellule d'impact
 MOINS_LIBRE = 15  # retiré à une cellule traversée
 
 # Prétraitement : mettre True ou False pour activer ou désactiver chaque filtre
-FILTRE_INTENSITE = True         # retirer les retours trop faibles
-FILTRE_MEDIANE = True           # corriger les distances par médiane glissante
+FILTRE_INTENSITE = True          # retirer les retours trop faibles
+FILTRE_MEDIANE = True            # corriger les distances par médiane glissante
 
 R_MIN, R_MAX = 0.10, 8.0         # filtrage : distances gardées (m)
 INTENSITE_MIN = 100              # filtrage : intensité minimale gardée (0 à 255), à régler
@@ -66,6 +66,15 @@ def lire_scan(fichier):
         if len(voisins) >= MIN_MESURES:      # point trop isolé -> pas fiable, ignoré
             scan.append((math.radians(a), float(np.median(voisins))))
     return scan
+
+
+def charger_poses(fichier="poses.csv"):
+    """Lit les poses enregistrées par affichage.py : {nom du scan: [x, y, theta]}."""
+    poses = {}
+    with open(fichier) as f:
+        for ligne in csv.DictReader(f):
+            poses[ligne["scan"]] = [float(ligne["x"]), float(ligne["y"]), float(ligne["theta"])]
+    return poses
 
 
 def vers_cellule(x, y):
@@ -149,11 +158,7 @@ def afficher(carte, titre):
 
 
 if __name__ == "__main__":
-    # Poses des scans : recopier ici celles affichées à la fermeture de affichage.py
-    POSES = {
-        "scan_01.csv": [0.0, 0.0, 0.0],
-        "scan_02.csv": [0.0, 0.0, 0.0],
-    }
+    POSES = charger_poses("poses.csv")           # poses enregistrées avec affichage.py
     noms = list(POSES)
 
     # Outil 1 : carte construite à partir du premier scan seul
@@ -163,6 +168,7 @@ if __name__ == "__main__":
     # Outil 2 (étape 5) : on met à jour la même carte avec les scans suivants
     for nom in noms[1:]:
         carte = mettre_a_jour(carte, lire_scan(nom), POSES[nom])
-    afficher(boucher_trous(carte.copy()), "Carte mise à jour avec " + ", ".join(noms))
+        print(nom, "ajouté")
+    afficher(boucher_trous(carte.copy()), f"Carte mise à jour avec {len(noms)} scans")
 
     plt.show()

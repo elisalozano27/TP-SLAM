@@ -5,6 +5,7 @@
 #
 # Fonctions :
 #   nuage_vers_segments(points)   nuage de points -> liste de segments
+#   ajuster_segment(points)       régression linéaire : meilleur segment passant par des points
 #   angle_entre(s1, s2)           angle entre deux segments (0 à 90°)
 #   sont_proches(s1, s2)          proches en angle ET en position ?
 #   fusionner(s1, s2)             un seul segment à partir de deux segments proches
@@ -19,14 +20,17 @@ import math
 TOL = 1e-6           # tolérance numérique (m) : deux longueurs qui diffèrent de moins de TOL sont égales
 
 # Réglages de l'extraction
-SAUT = 0.20          # écart entre deux points voisins au-delà duquel on change d'objet (m)
-SEUIL_SPLIT = 0.03   # écart maximal d'un point à son segment (m)
+SAUT = 0.15          # écart entre deux points voisins au-delà duquel on change d'objet (m)...
+SAUT_PAR_M = 0.05    # ... + ce supplément par mètre de distance au robot (les points s'écartent au loin)
+SEUIL_SPLIT = 0.05   # écart maximal d'un point à son segment (m)
 MIN_POINTS = 5       # nombre minimum de points pour faire un segment
-LONGUEUR_MIN = 0.10  # longueur minimale d'un segment (m)
+MORCEAU_MIN = 0.10   # longueur minimale d'un morceau avant fusion (m)
+LONGUEUR_MIN = 0.40  # longueur minimale d'un segment après fusion (m)
 
 # Réglages de "proches"
 ANGLE_MAX = 10.0     # écart d'angle maximal (°)
-DIST_MAX = 0.10      # distance maximale entre les deux segments (m)
+ECART_MAX = 0.08     # écart maximal sur le côté (perpendiculaire au mur) (m)
+TROU_MAX = 0.70      # trou maximal dans l'axe du mur entre les deux segments (m)
 
 
 # ---------- Outils de base ----------
@@ -45,32 +49,53 @@ def distance_point_segment(p, s):
 
 
 # ---------- 1. Nuage de points -> segments ----------
-def couper_en_groupes(points):
-    """Sépare les points en groupes : on change de groupe quand deux voisins sont trop éloignés."""
+def couper_en_groupes(points, origine=(0, 0)):
+    """Sépare les points en groupes : on change de groupe quand deux voisins sont trop éloignés.
+    Le seuil grandit avec la distance au robot, car les points lointains sont plus espacés."""
     groupes = [[points[0]]]
     for p, q in zip(points, points[1:]):
-        if math.dist(p, q) > SAUT:
+        if math.dist(p, q) > SAUT + SAUT_PAR_M * math.dist(origine, q):
             groupes.append([])
         groupes[-1].append(q)
     return groupes
 
 
+def ajuster_segment(points):
+    """Régression linéaire : droite qui passe au plus près de tous les points (moindres carrés),
+    limitée par les projections du premier et du dernier point sur cette droite."""
+    n = len(points)
+    mx = sum(x for x, _ in points) / n                     # centre du nuage
+    my = sum(y for _, y in points) / n
+    sxx = sum((x - mx) ** 2 for x, _ in points)
+    syy = sum((y - my) ** 2 for _, y in points)
+    sxy = sum((x - mx) * (y - my) for x, y in points)
+    a = 0.5 * math.atan2(2 * sxy, sxx - syy)               # direction de la droite
+    ux, uy = math.cos(a), math.sin(a)
+
+    def projeter(p):
+        t = (p[0] - mx) * ux + (p[1] - my) * uy
+        return mx + t * ux, my + t * uy
+
+    return projeter(points[0]), projeter(points[-1])
+
+
 def split(points):
-    """Split : si un point est trop loin du segment premier -> dernier, on coupe en deux à ce point."""
+    """Split : si un point est trop loin du segment premier -> dernier, on coupe en deux à ce point.
+    Sinon, on ajuste un segment sur tous les points du groupe."""
     s = (points[0], points[-1])
     ecarts = [distance_point_segment(p, s) for p in points]
     i = ecarts.index(max(ecarts))
     if ecarts[i] > SEUIL_SPLIT:
         return split(points[:i + 1]) + split(points[i:])
-    if len(points) >= MIN_POINTS and longueur(s) >= LONGUEUR_MIN:
-        return [s]
+    if len(points) >= MIN_POINTS and longueur(s) >= MORCEAU_MIN:
+        return [ajuster_segment(points)]
     return []                                    # trop petit : bruit, on l'ignore
 
 
-def nuage_vers_segments(points):
-    """Points triés dans l'ordre du balayage -> liste de segments."""
+def nuage_vers_segments(points, origine=(0, 0)):
+    """Points triés dans l'ordre du balayage -> liste de segments. origine = position du robot."""
     segments = []
-    for groupe in couper_en_groupes(points):
+    for groupe in couper_en_groupes(points, origine):
         segments += split(groupe)
     # Un même mur peut avoir été coupé en morceaux (point aberrant, passage à 0°) :
     # on fusionne les segments proches jusqu'à ce qu'il n'y en ait plus
@@ -82,7 +107,8 @@ def nuage_vers_segments(points):
                 break                            # segments[i] a changé : on recommence ses tests
         else:
             i += 1                               # plus rien à fusionner avec segments[i]
-    return segments
+    # Seulement maintenant, on retire les segments trop courts (morceaux restés seuls)
+    return [s for s in segments if longueur(s) >= LONGUEUR_MIN]
 
 
 # ---------- 2. Angle entre deux segments ----------
@@ -96,17 +122,20 @@ def angle_entre(s1, s2):
 
 
 # ---------- 3. Segments proches ----------
-def distance_segments(s1, s2):
-    """Distance la plus courte entre deux segments (0 s'ils se touchent)."""
-    if intersection(s1, s2) is not None:
-        return 0.0
-    return min(distance_point_segment(s1[0], s2), distance_point_segment(s1[1], s2),
-               distance_point_segment(s2[0], s1), distance_point_segment(s2[1], s1))
-
-
-def sont_proches(s1, s2, angle_max=ANGLE_MAX, dist_max=DIST_MAX):
-    """Proches = presque la même direction ET presque au même endroit."""
-    return angle_entre(s1, s2) <= angle_max and distance_segments(s1, s2) <= dist_max
+def sont_proches(s1, s2):
+    """Proches = presque la même direction, presque sur la même droite (écart sur le côté),
+    et pas trop loin l'un de l'autre le long de cette droite (trou dans l'axe)."""
+    if angle_entre(s1, s2) > ANGLE_MAX:
+        return False
+    long_, court = (s1, s2) if longueur(s1) >= longueur(s2) else (s2, s1)
+    (ax, ay), (bx, by) = long_
+    l = longueur(long_)
+    ux, uy = (bx - ax) / l, (by - ay) / l            # direction du plus long
+    # position des extrémités du plus court : t le long du plus long, n sur le côté
+    t = [(px - ax) * ux + (py - ay) * uy for px, py in court]
+    n = [abs(-(px - ax) * uy + (py - ay) * ux) for px, py in court]
+    trou = max(0.0, min(t) - l, 0.0 - max(t))        # 0 si les deux segments se chevauchent
+    return max(n) <= ECART_MAX and trou <= TROU_MAX
 
 
 # ---------- 4. Fusion ----------
@@ -192,6 +221,8 @@ def tests():
     test("pas proches : parallèle à 1 m", not sont_proches(mur, ((0, 1), (1, 1))))
     test("pas proches : alignés mais 1 m d'écart", not sont_proches(mur, ((2, 0), (3, 0))))
     test("pas proches : se touchent mais 30°", not sont_proches(mur, ((1, 0), (2, math.tan(math.radians(30))))))
+    test("proches : alignés avec 30 cm de trou", sont_proches(mur, ((1.3, 0), (2, 0))))
+    test("pas proches : parallèles à 15 cm (deux murs)", not sont_proches(mur, ((0, 0.15), (1, 0.15))))
 
     # Fusion
     test("fusion : couvre les deux segments", egal(fusionner(mur, ((0.8, 0), (2, 0))), ((0, 0), (2, 0))))
