@@ -9,11 +9,12 @@
 
 import csv
 import math
+from bisect import bisect_left, bisect_right
 import numpy as np
 import matplotlib.pyplot as plt
 
 # ---------- Étape 1 : définir la grille ----------
-TAILLE = 10.0                    # côté de la carte (m), robot au centre
+TAILLE = 12.0                    # côté de la carte (m), robot au centre
 RESOLUTION = 0.05                # côté d'une cellule (m)
 N = int(TAILLE / RESOLUTION)     # nombre de cellules par côté (200)
 INCONNU = 127                    # état initial de chaque cellule
@@ -21,8 +22,14 @@ INCONNU = 127                    # état initial de chaque cellule
 PLUS_OCC = 50     # ajouté à une cellule d'impact
 MOINS_LIBRE = 15  # retiré à une cellule traversée
 
+# Prétraitement : mettre True ou False pour activer ou désactiver chaque filtre
+FILTRE_INTENSITE = True         # retirer les retours trop faibles
+FILTRE_MEDIANE = True           # corriger les distances par médiane glissante
+
 R_MIN, R_MAX = 0.10, 8.0         # filtrage : distances gardées (m)
-MIN_MESURES = 3                  # médiane : nb minimum de mesures valides pour garder une direction
+INTENSITE_MIN = 100              # filtrage : intensité minimale gardée (0 à 255), à régler
+FENETRE = 0.5                    # médiane : demi-largeur de la fenêtre autour de chaque point (°)
+MIN_MESURES = 3                  # médiane : nb minimum de mesures dans la fenêtre pour garder le point
 
 
 def nouvelle_carte():
@@ -32,20 +39,32 @@ def nouvelle_carte():
 
 # ---------- Étape 2 : points lidar -> coordonnées de la grille ----------
 def lire_scan(fichier):
-    """Lit tous les tours d'un fichier CSV et garde, pour chaque degré, la médiane des distances.
-    Renvoie la liste des (angle en rad, distance en m)."""
-    distances = {}                            # angle arrondi (°) -> distances mesurées sur tous les tours
+    """Lit tous les tours d'un fichier CSV et applique les filtres activés :
+    - FILTRE_INTENSITE : retire les points d'intensité < INTENSITE_MIN ;
+    - FILTRE_MEDIANE : chaque point garde son angle exact, mais sa distance est remplacée par
+      la médiane des distances mesurées à ±FENETRE° autour de lui (tous tours confondus).
+    Renvoie la liste des (angle en rad, distance en m), triée par angle."""
+    mesures = []                              # (angle en °, distance en m) de tous les tours
     with open(fichier) as f:
         for ligne in csv.DictReader(f):
             r = float(ligne["distance_mm"]) / 1000
+            intensite = float(ligne.get("intensite", 255))   # anciens CSV sans intensité : point gardé
             if not R_MIN <= r <= R_MAX:       # filtrage : pas de retour (0), trop près ou trop loin
                 continue
-            angle = round(float(ligne["angle_deg"])) % 360
-            distances.setdefault(angle, []).append(r)
+            if FILTRE_INTENSITE and intensite < INTENSITE_MIN:   # retour trop faible, peu fiable
+                continue
+            mesures.append((float(ligne["angle_deg"]), r))
+    mesures.sort()
+    if not FILTRE_MEDIANE:                    # sans médiane : on garde les points tels quels
+        return [(math.radians(a), r) for a, r in mesures]
+    angles = [a for a, r in mesures]
     scan = []
-    for angle, liste in distances.items():
-        if len(liste) >= MIN_MESURES:         # direction vue trop rarement -> pas fiable, ignorée
-            scan.append((math.radians(angle), float(np.median(liste))))
+    for a, r in mesures:
+        debut = bisect_left(angles, a - FENETRE)     # premier voisin de la fenêtre
+        fin = bisect_right(angles, a + FENETRE)      # juste après le dernier voisin
+        voisins = [d for _, d in mesures[debut:fin]]
+        if len(voisins) >= MIN_MESURES:      # point trop isolé -> pas fiable, ignoré
+            scan.append((math.radians(a), float(np.median(voisins))))
     return scan
 
 
@@ -142,8 +161,8 @@ if __name__ == "__main__":
     afficher(boucher_trous(carte.copy()), "Carte à partir de " + noms[0])
 
     # Outil 2 (étape 5) : on met à jour la même carte avec les scans suivants
-    #for nom in noms[1:]:
-    #    carte = mettre_a_jour(carte, lire_scan(nom), POSES[nom])
-    #afficher(boucher_trous(carte.copy()), "Carte mise à jour avec " + ", ".join(noms))
+    for nom in noms[1:]:
+        carte = mettre_a_jour(carte, lire_scan(nom), POSES[nom])
+    afficher(boucher_trous(carte.copy()), "Carte mise à jour avec " + ", ".join(noms))
 
     plt.show()
