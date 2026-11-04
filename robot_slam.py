@@ -46,7 +46,7 @@ PAS_XY, PAS_THETA = 0.02, 1.0   # correction à la main du scan choisi (m, °)
 V_AVANCE = 0.20          # m/s
 V_LATERAL = 0.15         # m/s (translation)
 V_ROTATION = 60.0        # °/s
-VITESSE_DEFAUT, PAS_VITESSE, VITESSE_MIN, VITESSE_MAX = 80, 25, 50, 255   # comme dans l'ESP32
+VITESSE_DEFAUT, PAS_VITESSE, VITESSE_MIN, VITESSE_MAX = 150, 25, 50, 255   # comme dans l'ESP32
 
 # touche : (avant, gauche, rotation, texte)
 MOUVEMENTS = {"z": (1, 0, 0, "avance"), "s": (-1, 0, 0, "recule"), "q": (0, 0, 1, "tourne à gauche"),
@@ -114,9 +114,9 @@ def connecter():
         robot = socket.create_connection((IP, PORT), timeout=3)
         robot.settimeout(5)
         message("Connecté au robot.")
-    except OSError:
+    except OSError as erreur:
         robot = None
-        message(f"Robot non joignable ({IP}). Connecte le PC au WiFi Robot_SLAM, puis « Reconnecter ».")
+        message(f"Robot non joignable ({IP}:{PORT}) : {erreur}. Connecte le PC au WiFi Robot_SLAM, puis « Reconnecter ».")
 
 
 def envoyer(texte):
