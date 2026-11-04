@@ -8,6 +8,7 @@
 #
 # Erreur relative = |valeur trouvée - valeur attendue| / |valeur attendue|, en %, pour x, y et θ.
 
+import math
 import numpy as np
 import matplotlib.pyplot as plt
 import localisation_grid as L
@@ -19,6 +20,9 @@ SCAN = "Map_Tool_scan_lidar.csv"     # scan pris dans cette carte
 NB_ESSAIS = 20               # test 2 : nb d'estimations initiales tirées au hasard
 ECART_XY = 0.40              # test 2 : erreur maximale sur x et sur y (m)
 ECART_THETA = 10.0           # test 2 : erreur maximale sur θ (°)
+NB_ESSAIS_NIVEAU = 10        # test 3 : nb d'estimations initiales par niveau d'erreur
+SEUIL_XY = 0.05              # réussite : erreur de position < SEUIL_XY (m)
+SEUIL_THETA = 2.0            # ... et erreur angulaire < SEUIL_THETA (°)
 
 
 def lire_carte_vect(fichier):
@@ -64,21 +68,40 @@ if __name__ == "__main__":
     test2 = {nom: [chrono(lambda: m(d)) for d in departs] for nom, m in locales.items()}
 
     print(f"\nPose attendue : x = {vraie[0]:.2f} m  y = {vraie[1]:.2f} m  θ = {vraie[2]:.1f}°")
-    entete = f"{'Méthode':30s} {'x':>7s} {'y':>7s} {'θ':>7s}   temps"
+    entete = f"{'Méthode':30s} {'x':>7s} {'y':>7s} {'θ':>7s}   {'erreur (cm, °)':>16s}   temps"
     print("\nTest 1 : sans estimation initiale — erreurs relatives")
     print(entete)
     for nom, (pose, duree) in test1.items():
         ex, ey, et = erreurs_relatives(pose, vraie)
-        print(f"{nom:30s} {ex:6.1f}% {ey:6.1f}% {et:6.1f}%   {duree:5.2f} s")
+        d, a = L.erreur(pose, vraie)
+        print(f"{nom:30s} {ex:6.1f}% {ey:6.1f}% {et:6.1f}%   {d * 100:8.1f} cm {a:5.2f}°   {duree:5.2f} s")
 
     print(f"\nTest 2 : {NB_ESSAIS} estimations initiales fausses (jusqu'à ±{ECART_XY * 100:.0f} cm, ±{ECART_THETA:.0f}°)"
-          " — erreurs relatives moyennes")
+          f" — erreurs moyennes et taux de réussite (< {SEUIL_XY * 100:.0f} cm et < {SEUIL_THETA:.0f}°)")
     print(entete)
     ex, ey, et = np.mean([erreurs_relatives(d, vraie) for d in departs], axis=0)
-    print(f"{'(estimation initiale)':30s} {ex:6.1f}% {ey:6.1f}% {et:6.1f}%")
+    dm, am = np.mean([L.erreur(d, vraie) for d in departs], axis=0)
+    print(f"{'(estimation initiale)':30s} {ex:6.1f}% {ey:6.1f}% {et:6.1f}%   {dm * 100:8.1f} cm {am:5.2f}°")
     for nom, liste in test2.items():
         ex, ey, et = np.mean([erreurs_relatives(pose, vraie) for pose, _ in liste], axis=0)
-        print(f"{nom:30s} {ex:6.1f}% {ey:6.1f}% {et:6.1f}%   {np.mean([t for _, t in liste]) * 1000:5.1f} ms")
+        err = [L.erreur(pose, vraie) for pose, _ in liste]
+        dm, am = np.mean(err, axis=0)
+        taux = 100 * np.mean([d < SEUIL_XY and a < SEUIL_THETA for d, a in err])
+        print(f"{nom:30s} {ex:6.1f}% {ey:6.1f}% {et:6.1f}%   {dm * 100:8.1f} cm {am:5.2f}°"
+              f"   {np.mean([t for _, t in liste]) * 1000:5.1f} ms   réussite {taux:3.0f}%")
+
+    # ---------- Test 3 : sensibilité à l'estimation initiale (erreur de départ de plus en plus grande) ----------
+    import localisation_scan_simulation as S            # ici : sinon les imports tournent en rond
+    res = {}
+    for k, (exy, eth) in enumerate(S.ERREURS_DEPART):
+        for _ in range(NB_ESSAIS_NIVEAU):
+            phi = rng.uniform(0, 2 * math.pi)            # direction de l'erreur tirée au hasard
+            d = [vraie[0] + exy * math.cos(phi), vraie[1] + exy * math.sin(phi), vraie[2] + eth * rng.choice([-1, 1])]
+            for nom, m in locales.items():
+                pose, t = chrono(lambda: m(d))
+                res.setdefault(nom, [[] for _ in S.ERREURS_DEPART])[k].append((*L.erreur(pose, vraie), t))
+    S.SEUIL_XY, S.SEUIL_THETA = SEUIL_XY, SEUIL_THETA   # afficher lit les seuils dans localisation_scan_simulation
+    S.afficher(res, f"Test 3 : {NB_ESSAIS_NIVEAU} départs faux par niveau")
 
     # ---------- Affichage : une pose par méthode ----------
     a_montrer = {nom + " (global)": test1[nom][0] for nom in ("Force brute", "Multi-résolution", "Filtre à particules")}
