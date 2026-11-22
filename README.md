@@ -3,6 +3,8 @@
 Cartographie d'une salle et localisation du robot MecanumCarV2 avec un lidar LD06 et un ESP32.
 Le compte rendu complet (démarche, choix, résultats, limites) est dans `compte_rendu_slam_lidar.html` : il s'ouvre dans n'importe quel navigateur.
 
+lien GitHub : https://github.com/elisalozano27/TP-SLAM.git
+
 ## Installation
 
 **PC** : Python 3.10 ou plus récent, puis :
